@@ -1,3 +1,149 @@
-from django.shortcuts import render
+import json
 
-# Create your views here.
+from django.http      import JsonResponse
+from django.db.models import Q, Count , Max
+
+from books.models   import Book, BookOption, Category
+from django.views   import View
+
+class BookListView(View) :
+    def get(self, request , **kargs):
+        try :
+            order       = request.GET.get('order', None)
+            category_id = kargs.get('category_id') 
+
+            q = Q()
+            if category_id != None:
+                q.add(Q(category_id = category_id), q.AND)
+
+            books = Book.objects.filter(q).distinct().order_by('-updated_at').annotate(review_count = Count('review_book'))
+            books = books.select_related('author')
+
+            if order :
+                if order == 'lowprice':
+                    books = books.annotate(book_price =  Max('book_option__price'))
+                    books = books.order_by('book_price')[:20]
+                elif order == 'highprice' :
+                    books = books.annotate(book_price =  Max('book_option__price'))
+                    books = books.order_by('-book_price')[:20]
+                elif order == 'latest' :
+                    books = books.order_by('created_at')[:20]
+                elif order == 'review' :
+                    books = books.order_by('review_count')[:20]
+
+            result_data =dict()
+            book_list = [{
+                "book_id"      : book.id,
+                "title"        : book.title,
+                "author_name"  : book.author.name,
+                "img"          : book.cover_image,
+                "rating"       : book.everage_rate,
+                "review_count" : book.review_count,
+                "max_price"    : book.book_price
+                }for book in books
+            ]
+            result_data['books']  = book_list
+            result_data['result'] = 'success'
+
+            return JsonResponse(result_data, status = 200)
+        except KeyError:
+            return JsonResponse({"message" : "KEY_ERROR"},status = 400)
+
+class NavCategoryView(View):
+    def get(self, reqeust):
+        categories  = Category.objects.all()
+        
+        if categories.count() == 0 :
+            return JsonResponse({'message' :  'NO_ASSET'}, status = 404)
+        
+        result_data   = dict()
+        
+        category_list = [
+            {
+                "id"    : category.id,
+                "name"  : category.name,
+                "url"   : f"books/{category.id}"
+            }for category in categories
+        ]
+        category_list.insert(0, 
+            {
+                "name" : "전체 보기",
+                "url"  : "books"
+            }
+        )
+        result_data['categories'] = category_list
+        result_data['result']     = 'success'
+        return JsonResponse(result_data,status=200)
+
+class BookDetailView(View):
+    def temp(self, request, **kargs):
+        book_id = kargs.get('book_id')
+        
+        if book_id == None :
+            return JsonResponse({"message" : "KEY_ERROR"}, status=400)
+
+        book = Book.objects.filter(id = book_id).select_related('book_detail')
+        
+        if not book.exists():
+            return JsonResponse({"message" : "NO_ASSET"}, status=400)        
+        
+        book_author  = book.select_related('author').get()
+        book_options = BookOption.objects.filter(book_id = book_id).select_related('option').all()
+        author_id = book_author.author.id
+        
+        return JsonResponse({"message": f"{book.book_detail.publisher}"},status=200)
+
+    def get(self, request, **kargs):
+        try :
+            book_id = kargs.get('book_id')
+            
+            if book_id == None :
+                return JsonResponse({"message" : "KEY_ERROR"}, status=400)
+            
+            book_data = Book.objects.filter(id = book_id).select_related('book_detail')
+            if not book_data.exists() :
+                return JsonResponse({"message" : "INVALID_BOOK"}, status=404)
+
+            author_data = book_data.select_related('author').get()
+            book_option = BookOption.objects.filter(book_id = book_id).select_related('option').all()
+            author_id = author_data.id
+
+            book_data = book_data.get()
+            author_write = Book.objects.filter(author_id = author_id).distinct().order_by('-updated_at')[:10]
+            
+            result_data = dict()
+            author_books = [
+                {
+                    "book_id"   : book.id,   
+                    "title"     : book.title,
+                    "img"       : book.cover_image,
+                    "rating"    : book.everage_rate,
+                    "url"       : f"/books/book/{book.id}"
+                }for book in author_write
+            ]
+
+            result_data['book'] = {
+                "name"        : book_data.title,
+                "publisher"   : book_data.book_detail.publisher,
+                "public_date" : book_data.book_detail.public_date,
+		        "rating"      : book_data.everage_rate,
+                "book_option" : [
+                    {
+                        "id"    : option.id,
+                        "name"  : option.option.name,
+                        "price" : option.price,
+                        "discount" : option.discount,
+                        "is_discount" : option.is_discount
+                    }for option in book_option
+                ],
+                "author" : {
+                    "name"    : author_data.author.name,
+                    "intro"   : author_data.author.introduction
+                }
+            }
+            result_data['author_write'] = author_books
+            result_data['result']   = 'success'
+            return JsonResponse(result_data,status=200)
+
+        except KeyError :
+            return JsonResponse({"message": "KEY_ERROR"},status=400)
