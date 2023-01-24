@@ -92,7 +92,7 @@ DATABASES="", // 데이터 베이스 접속 url
 ALGORITHM="" // 암호화 알고리즘명 대문자로적을 것 
 ```
 
-4. dependency 설정
+4. dependency 설치 (파이썬 모듈 설치)
 
 requirements.txt에 적힌 파이썬 모듈 설치
 - conda 실행 상태에서 명령어
